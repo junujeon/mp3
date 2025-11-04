@@ -29,9 +29,24 @@ module.exports = function (router) {
     tasksRoute.post(async function (req, res) {
         try {
             if (!req.body.name || !req.body.deadline)
-                return res
-                    .status(400)
-                    .json({ message: 'Missing name or deadline', data: {} });
+                return res.status(400).json({ message: 'Missing name or deadline', data: {} });
+
+            if (req.body.completed === true) {
+                return res.status(400).json({ message: 'Cannot assign a completed task', data: {} });
+            }
+
+            // validate assignedUser and assignedUserName consistency
+            if (req.body.assignedUser) {
+                const assignedUser = await User.findById(req.body.assignedUser);
+                if (!assignedUser) {
+                    return res.status(400).json({ message: 'Invalid assignedUser ID', data: {} });
+                }
+                if (req.body.assignedUserName && req.body.assignedUserName !== assignedUser.name) {
+                    return res.status(400).json({ message: 'assignedUserName does not match user name', data: {} });
+                }
+                // make correct name
+                req.body.assignedUserName = assignedUser.name;
+            }
     
             const newTask = new Task(req.body);
             await newTask.save();
@@ -54,26 +69,60 @@ module.exports = function (router) {
     // GET /api/tasks/:id
     tasksIdRoute.get(async function (req, res) {
         try {
-            const task = await Task.findById(req.params.id);
+            const task = await Task.findById(req.params.id).select(JSON.parse(req.query.select || '{}'));;
             if (!task)
                 return res.status(404).json({ message: 'Task not found', data: {} });
             res.status(200).json({ message: 'OK', data: task });
         } catch (err) {
-            res.status(400).json({ message: 'Bad Request', data: err });
+            res.status(404).json({ message: 'Task not found', data: {} });
         }
     });
   
     // PUT /api/tasks/:id
     tasksIdRoute.put(async function (req, res) {
         try {
-            const task = await Task.findById(req.params.id);
-            if (!task)
+            const existing = await Task.findById(req.params.id);
+            if (!existing)
                 return res.status(404).json({ message: 'Task not found', data: {} });
-    
-            const oldUserId = task.assignedUser;
-            const updated = await Task.findByIdAndUpdate(req.params.id, req.body, {
-                new: true,
-            });
+
+            // validate required fields (same as POST)
+            if (!req.body.name || !req.body.deadline) {
+                return res.status(400).json({ message: 'Missing name or deadline', data: {} });
+            }
+        
+            // validate assignedUser and assignedUserName
+            if (req.body.assignedUser) {
+                const assignedUser = await User.findById(req.body.assignedUser);
+                if (!assignedUser) {
+                    return res.status(400).json({ message: 'Invalid assignedUser ID', data: {} });
+                }
+                if (req.body.assignedUserName && req.body.assignedUserName !== assignedUser.name) {
+                    return res.status(400).json({ message: 'assignedUserName does not match user name', data: {} });
+                }
+                req.body.assignedUserName = assignedUser.name;
+            }
+
+            // reject modifying a completed task
+            if (existing.completed === true) {
+                return res.status(400).json({ message: 'Cannot modify a completed task', data: {} });
+            }
+
+            // if request is trying to assign a completed task, reject it
+            if (req.body.completed === true && req.body.assignedUser) {
+                return res.status(400).json({ message: 'Cannot assign a completed task to a user', data: {} });
+            }
+
+            // if marking this task as completed, remove it from the user's pendingTasks
+            if (req.body.completed === true && existing.assignedUser) {
+                const user = await User.findById(existing.assignedUser);
+                if (user) {
+                    user.pendingTasks = user.pendingTasks.filter(id => id !== existing._id.toString());
+                    await user.save();
+                }
+            }
+
+            const oldUserId = existing.assignedUser;
+            const updated = await Task.findByIdAndUpdate(req.params.id, req.body, { new: true });
     
             // Remove from old user
             if (oldUserId && oldUserId !== updated.assignedUser) {
@@ -99,7 +148,7 @@ module.exports = function (router) {
     
             res.status(200).json({ message: 'Task updated', data: updated });
         } catch (err) {
-            res.status(400).json({ message: 'Bad Request', data: err });
+            res.status(404).json({ message: 'Task not found', data: {} });
         }
     });
   
@@ -123,7 +172,7 @@ module.exports = function (router) {
     
             res.status(200).json({ message: 'Task deleted', data: deleted });
         } catch (err) {
-            res.status(400).json({ message: 'Bad Request', data: err });
+            res.status(404).json({ message: 'Task not found', data: {} });
         }
     });
   

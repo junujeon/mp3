@@ -50,14 +50,14 @@ module.exports = function (router) {
     // GET /api/users/:id
     usersIdRoute.get(async function (req, res) {
         try {
-            const user = await User.findById(req.params.id);
+            const user = await User.findById(req.params.id).select(JSON.parse(req.query.select || '{}'));
             if (!user)
                 return res.status(404).json({ message: 'User not found', data: {} });
             res.status(200).json({ message: 'OK', data: user });
         } catch (err) {
-            res.status(400).json({ message: 'Bad Request', data: err });
+            res.status(404).json({ message: 'User not found', data: {} });
         }
-    });
+    });    
   
     // PUT /api/users/:id
     usersIdRoute.put(async function (req, res) {
@@ -65,6 +65,24 @@ module.exports = function (router) {
             const user = await User.findById(req.params.id);
             if (!user)
                 return res.status(404).json({ message: 'User not found', data: {} });
+
+            // Validate required fields (same as POST)
+            if (!req.body.name || !req.body.email) {
+                return res.status(400).json({ message: 'Missing name or email', data: {} });
+            }
+
+            // validate that pendingTasks do not include completed or nonexistent tasks
+            if (req.body.pendingTasks && Array.isArray(req.body.pendingTasks)) {
+                for (const taskId of req.body.pendingTasks) {
+                    const task = await Task.findById(taskId);
+                    if (!task) {
+                        return res.status(400).json({ message: 'One or more task IDs do not exist', data: {} });
+                    }
+                    if (task.completed === true) {
+                        return res.status(400).json({ message: 'Cannot assign a completed task to a user', data: {} });
+                    }
+                }
+            }
     
             const updated = await User.findByIdAndUpdate(req.params.id, req.body, {
                 new: true,
@@ -94,7 +112,7 @@ module.exports = function (router) {
     
             res.status(200).json({ message: 'User updated', data: updated });
         } catch (err) {
-            res.status(400).json({ message: 'Bad Request', data: err });
+            res.status(404).json({ message: 'User not found', data: {} });
         }
     });
   
@@ -113,7 +131,7 @@ module.exports = function (router) {
     
             res.status(200).json({ message: 'User deleted', data: deleted });
         } catch (err) {
-            res.status(400).json({ message: 'Bad Request', data: err });
+            res.status(404).json({ message: 'User not found', data: {} });
         }
     });
   
